@@ -1,27 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { login, signup, getSavedEmail } from '../services/auth.service';
+import React, { useState } from 'react';
 
-export default function AuthScreen({ onDone }: { onDone: () => void }) {
-  const [mode, setMode]         = useState<'login' | 'signup'>('login');
-  const [name, setName]         = useState('');
-  const [email, setEmail]       = useState('');
+export default function AuthScreenTest({ onDone }: { onDone: () => void }) {
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [toast, setToast]       = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  // Pre-fill email if user previously logged out (not deleted)
-  useEffect(() => {
-    getSavedEmail().then(saved => {
-      if (saved) setEmail(saved);
-    });
-  }, []);
-
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!email || !password) {
       showToast('Please fill in all fields.', 'error');
       return;
@@ -30,26 +21,19 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
       showToast('Please enter your name.', 'error');
       return;
     }
-    try {
-      if (mode === 'login') {
-        await login(email, password);
-        showToast('Login successful! Welcome back 👋');
-      } else {
-        await signup(name, email, password);
-        showToast('Account created! Welcome aboard 🎉');
-      }
-      setTimeout(() => onDone(), 1200);
-    } catch (error: any) {
-      const message = error.response?.data?.detail || 'Something went wrong. Please try again.';
-      showToast(message, 'error');
+    if (mode === 'login') {
+      showToast('Login successful! Welcome back 👋', 'success');
+    } else {
+      showToast('Account created! Welcome aboard 🎉', 'success');
     }
   };
 
   const toggleMode = () => {
     setMode(prev => prev === 'login' ? 'signup' : 'login');
     setName('');
+    setEmail('');
     setPassword('');
-    // ✅ Email intentionally kept pre-filled when switching modes
+    setToast(null);
   };
 
   return (
@@ -86,12 +70,10 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
         </div>
       )}
 
-      {/* Title */}
       <h1 style={{ color: '#00CEEA', marginBottom: '20px' }}>
         {mode === 'login' ? 'Login' : 'Sign Up'}
       </h1>
 
-      {/* Name (signup only) */}
       {mode === 'signup' && (
         <input
           type="text"
@@ -104,14 +86,11 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
             borderRadius: '5px',
             border: 'none',
             width: '300px',
-            fontSize: '15px',
-            backgroundColor: 'white',
-            color: '#03101F'
+            fontSize: '15px'
           }}
         />
       )}
 
-      {/* Email */}
       <input
         type="email"
         placeholder="Email"
@@ -123,13 +102,10 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
           borderRadius: '5px',
           border: 'none',
           width: '300px',
-          fontSize: '15px',
-          backgroundColor: 'white',
-          color: '#03101F'
+          fontSize: '15px'
         }}
       />
 
-      {/* Password */}
       <input
         type="password"
         placeholder="Password"
@@ -141,13 +117,10 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
           borderRadius: '5px',
           border: 'none',
           width: '300px',
-          fontSize: '15px',
-          backgroundColor: 'white',
-          color: '#03101F'
+          fontSize: '15px'
         }}
       />
 
-      {/* Login / Create Account Button */}
       <button
         onClick={handleSubmit}
         style={{
@@ -166,7 +139,6 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
         {mode === 'login' ? 'Login →' : 'Create Account →'}
       </button>
 
-      {/* Toggle Mode */}
       <button
         onClick={toggleMode}
         style={{
@@ -176,14 +148,12 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
           border: 'none',
           background: '#1a3a5c',
           color: 'white',
-          cursor: 'pointer',
-          fontSize: '14px'
+          cursor: 'pointer'
         }}
       >
         Switch to {mode === 'login' ? 'Sign Up' : 'Login'}
       </button>
 
-      {/* Skip to App */}
       <button
         onClick={onDone}
         style={{
@@ -193,8 +163,7 @@ export default function AuthScreen({ onDone }: { onDone: () => void }) {
           border: 'none',
           background: '#06D68A',
           color: 'white',
-          cursor: 'pointer',
-          fontSize: '14px'
+          cursor: 'pointer'
         }}
       >
         Skip to App

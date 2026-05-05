@@ -1,7 +1,6 @@
 """
 RxScan AI — Pharmacy Router
 GET /api/pharmacies/nearby  → Find nearby pharmacies via Google Maps
-GET /api/pharmacies/mock    → Mock data for testing without API key
 """
 
 import os
@@ -29,11 +28,11 @@ async def get_nearby_pharmacies(
     Find nearby pharmacies using Google Maps Places API.
     Free tier: $200/month credit = ~28,000 requests/month.
     
-    If GOOGLE_MAPS_API_KEY not set, returns mock data for testing.
+    Requires GOOGLE_MAPS_API_KEY in environment.
     """
     if not GOOGLE_MAPS_API_KEY:
-        logger.warning("GOOGLE_MAPS_API_KEY not set. Returning mock pharmacy data.")
-        return _get_mock_pharmacies(lat, lng)
+        logger.error("GOOGLE_MAPS_API_KEY not set.")
+        raise HTTPException(status_code=503, detail="Pharmacy search unavailable. GOOGLE_MAPS_API_KEY not configured.")
 
     try:
         params = {
@@ -49,7 +48,7 @@ async def get_nearby_pharmacies(
 
         if data.get("status") not in ("OK", "ZERO_RESULTS"):
             logger.error(f"Google Maps error: {data.get('status')} — {data.get('error_message', '')}")
-            return _get_mock_pharmacies(lat, lng)
+            raise HTTPException(status_code=502, detail=f"Google Maps API error: {data.get('status')}")
 
         pharmacies = []
         for place in data.get("results", [])[:limit]:
@@ -82,81 +81,7 @@ async def get_nearby_pharmacies(
 
     except Exception as e:
         logger.error(f"Pharmacy search failed: {e}")
-        return _get_mock_pharmacies(lat, lng)
-
-
-@router.get("/pharmacies/mock")
-def get_mock_pharmacies_endpoint(
-    lat: float = Query(default=28.6139, description="Latitude"),
-    lng: float = Query(default=77.2090, description="Longitude"),
-):
-    """Return mock pharmacy data for testing (no API key needed)."""
-    return _get_mock_pharmacies(lat, lng)
-
-
-def _get_mock_pharmacies(lat: float, lng: float) -> dict:
-    """Mock pharmacy data for development/testing."""
-    mock_pharmacies = [
-        {
-            "place_id": "mock_001",
-            "name": "Apollo Pharmacy",
-            "address": "Near Main Market, 100m",
-            "lat": lat + 0.002,
-            "lng": lng + 0.001,
-            "rating": 4.3,
-            "total_ratings": 127,
-            "open_now": True,
-            "distance_meters": 250,
-            "phone": "+91-XXXXXXXXXX",
-        },
-        {
-            "place_id": "mock_002",
-            "name": "MedPlus Pharmacy",
-            "address": "Station Road, 350m",
-            "lat": lat - 0.003,
-            "lng": lng + 0.002,
-            "rating": 4.1,
-            "total_ratings": 89,
-            "open_now": True,
-            "distance_meters": 350,
-            "phone": "+91-XXXXXXXXXX",
-        },
-        {
-            "place_id": "mock_003",
-            "name": "Jan Aushadhi Kendra",
-            "address": "Government Hospital Campus, 500m",
-            "lat": lat + 0.004,
-            "lng": lng - 0.002,
-            "rating": 3.9,
-            "total_ratings": 45,
-            "open_now": True,
-            "distance_meters": 500,
-            "phone": "+91-XXXXXXXXXX",
-            "note": "Generic medicines at subsidized prices",
-        },
-        {
-            "place_id": "mock_004",
-            "name": "Netmeds Express (Delivery)",
-            "address": "Online delivery — 2-4 hours",
-            "lat": lat,
-            "lng": lng,
-            "rating": 4.5,
-            "total_ratings": 2340,
-            "open_now": True,
-            "distance_meters": 0,
-            "delivery": True,
-            "url": "https://www.netmeds.com",
-        },
-    ]
-
-    return {
-        "success": True,
-        "count": len(mock_pharmacies),
-        "user_location": {"lat": lat, "lng": lng},
-        "pharmacies": mock_pharmacies,
-        "is_mock_data": True,
-        "note": "Set GOOGLE_MAPS_API_KEY in .env for real data",
-    }
+        raise HTTPException(status_code=500, detail="Pharmacy search failed")
 
 
 def _calc_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> int:

@@ -6,14 +6,24 @@ import io
 import re
 from PIL import Image
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from models.ocr_model import run_ocr, is_models_loaded
 from services.medicine_matcher import extract_medicines
 from services.dosage_extractor import extract_dosage_info   # ✅ NEW
+from services.pdf_generator import generate_prescription_pdf  # ✅ PDF
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ✅ PDF Request Model
+class PDFGenerateRequest(BaseModel):
+    medicines: list
+    doctor_info: dict | None = None
+    scan_confidence: float = 0.0
+    processing_time_seconds: float = 0.0
 
 
 # 🔥 IMAGE PROCESSING
@@ -92,7 +102,8 @@ async def scan_prescription(
                 "message": "No text detected",
                 "raw_text": "",
                 "medicines": [],
-                "scan_confidence": 0
+                "scan_confidence": 0,
+                "warnings": ["No text detected in image"]
             })
 
         cleaned = clean_text(text)
@@ -142,7 +153,7 @@ async def scan_prescription(
 
             "summary": summary,
 
-            "prescription": prescription,
+            "medicines": prescription,
 
             "scan_confidence": confidence,
             "confidence_level": status,
@@ -161,3 +172,34 @@ async def health():
         "models_loaded": is_models_loaded(),
         "status": "ready" if is_models_loaded() else "loading",
     }
+
+
+# ✅ PDF Download Endpoint
+@router.post("/pdf/download")
+async def download_prescription_pdf(request: PDFGenerateRequest):
+    """
+    Generate and download prescription as PDF
+    """
+    try:
+        logger.info("📄 Generating PDF...")
+        pdf_buffer = generate_prescription_pdf({
+            "medicines": request.medicines,
+            "doctor_info": request.doctor_info,
+            "scan_confidence": request.scan_confidence,
+            "processing_time_seconds": request.processing_time_seconds,
+        })
+        
+        pdf_data = pdf_buffer.getvalue()
+        logger.info(f"✅ PDF generated successfully ({len(pdf_data)} bytes)")
+        
+        return StreamingResponse(
+            iter([pdf_data]),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=prescription.pdf",
+                "Content-Length": str(len(pdf_data)),
+            }
+        )
+    except Exception as e:
+        logger.error(f"PDF generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")

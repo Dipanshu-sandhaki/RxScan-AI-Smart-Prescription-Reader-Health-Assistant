@@ -9,15 +9,16 @@ pydantic==2.7.1
 pydantic-settings==2.2.1
 
 # ─── AI / ML (HTR — Handwritten Text Recognition) ───────────────────────────
-torch                              # CPU version is fine for dev
-torchvision
-transformers==4.40.1               # TrOCR from HuggingFace (upgraded)
-Pillow==10.3.0                     # Image processing (upgraded)
+torch>=2.0.0                       # CPU version is fine for dev
+torchvision>=0.17.0
+transformers>=4.30.0               # TrOCR from HuggingFace
+Pillow>=11.0.0                     # Image processing (latest for Py3.13)
 sentencepiece                      # Required by some tokenizers
+easyocr>=1.7.0                     # Simple OCR alternative
 
 # ─── Computer Vision ─────────────────────────────────────────────────────────
-opencv-python-headless==4.9.0.80   # OpenCV (headless = no GUI deps)
-numpy
+opencv-python-headless>=4.8.0      # OpenCV (headless = no GUI deps)
+numpy>=1.24.0
 
 # ─── String/Drug Matching ────────────────────────────────────────────────────
 rapidfuzz==3.6.1                   # Fast fuzzy string matching
@@ -37,7 +38,7 @@ firebase-admin==6.5.0
 python-jose                        # JWT (Firebase auth verification)
 
 # ─── Utilities ───────────────────────────────────────────────────────────────
-python-dotenv==1.0.1               # Load .env file
-
+python-dotenv==1.0.1               # Load .env filereportlab>=4.0.0                   # PDF generation
+python-dateutil>=2.8.0             # Date utilities
 # ─── Dev / Testing ───────────────────────────────────────────────────────────
 pytest

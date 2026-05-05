@@ -1,4 +1,4 @@
-import React, { JSX, useState } from 'react';
+import React, { JSX, useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -16,6 +16,7 @@ import ResultsScreen    from './screens/ResultsScreen';
 import ScheduleScreen   from './screens/ScheduleScreen';
 import HistoryScreen    from './screens/HistoryScreen';
 import ProfileScreen    from './screens/ProfileScreen';
+import { isLoggedIn } from './services/auth.service';
 
 const Stack = createNativeStackNavigator();
 const Tab   = createBottomTabNavigator();
@@ -210,11 +211,61 @@ function MainTabs() {
 
 // ─── Root App ──────────────────────────────────────────────────
 export default function App() {
-  const [phase, setPhase] = useState<AppPhase>('boot');
+  const [phase, setPhase] = useState<AppPhase>('boot'); // Fast boot for quick access
+  const [checkingAuth, setCheckingAuth] = useState(false);
 
-  const onBootDone       = () => setPhase('onboarding');
-  const onOnboardingDone = () => setPhase('auth');   // ← CHANGE 3: was 'main', now 'auth'
-  const onAuthDone       = () => setPhase('main');   // ← CHANGE 4: new handler added
+  // Debug: Log phase changes
+  useEffect(() => {
+    console.log('App - Current phase:', phase);
+  }, [phase]);
+
+  // Fast track: Add keyboard shortcut for quick access
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.key === 'o' && e.ctrlKey) {
+        console.log('Ctrl+O pressed - fast track to onboarding');
+        setPhase('onboarding');
+      }
+      if (e.key === 'q' && e.ctrlKey) {
+        console.log('Ctrl+Q pressed - fast track to auth');
+        setPhase('auth');
+      }
+    };
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  const onBootDone = async () => {
+    // Temporarily force onboarding to test auth flow
+    console.log('App - Forcing onboarding phase');
+    setPhase('onboarding');
+    
+    // Original logic (commented out for testing):
+    /*
+    setCheckingAuth(true);
+    const loggedIn = await isLoggedIn();
+    console.log('App - isLoggedIn result:', loggedIn);
+    setCheckingAuth(false);
+    if (loggedIn) {
+      setPhase('main');
+    } else {
+      setPhase('onboarding');
+    }
+    */
+  };
+  const onOnboardingDone = () => setPhase('auth');
+  const onAuthDone       = () => setPhase('main');
+
+  // Show loading while checking auth
+  if (checkingAuth) {
+    return (
+      <SafeAreaProvider>
+        <View style={{ flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: C.white }}>Checking authentication...</Text>
+        </View>
+      </SafeAreaProvider>
+    );
+  }
 
   // Boot screen is fully independent — no NavigationContainer needed
   if (phase === 'boot') {

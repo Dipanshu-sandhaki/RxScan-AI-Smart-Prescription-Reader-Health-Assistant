@@ -346,11 +346,16 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Skip */}
+        {/* Skip & Fast Track */}
         {!isLast && (
-          <TouchableOpacity onPress={onDone} style={s.skipBtn}>
-            <Text style={s.skipTxt}>Skip for now</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity onPress={onDone} style={s.skipBtn}>
+              <Text style={s.skipTxt}>Skip for now</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onDone} style={[s.skipBtn, { backgroundColor: C.teal }]}>
+              <Text style={[s.skipTxt, { color: C.white }]}>Fast Track →</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     </View>

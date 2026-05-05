@@ -45,7 +45,6 @@ export interface PharmacyResult {
   success: boolean;
   count: number;
   pharmacies: Pharmacy[];
-  is_mock_data?: boolean;
   user_location: { lat: number; lng: number };
 }
 
@@ -172,14 +171,6 @@ export async function getNearbyPharmacies(
   const response = await api.get<PharmacyResult>('/api/pharmacies/nearby', {
     params: { lat, lng, radius },
   });
-  return response.data;
-}
-
-/**
- * Get mock pharmacies for testing (no GPS/API needed).
- */
-export async function getMockPharmacies(): Promise<PharmacyResult> {
-  const response = await api.get<PharmacyResult>('/api/pharmacies/mock');
   return response.data;
 }
 

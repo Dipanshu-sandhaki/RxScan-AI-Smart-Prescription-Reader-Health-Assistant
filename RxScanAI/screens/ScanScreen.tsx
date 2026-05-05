@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LANGUAGES } from '../constants/languages';
 import { scanPrescription } from '../services/ocr.service';
@@ -405,21 +406,69 @@ export default function ScanScreen({ navigation }: any) {
   } catch (err) {
     console.log("❌ API ERROR:", err);
     setScanState("idle");
+    alert("Failed to scan prescription. Please try again.");
     return;
   }
-
-  // ❌ FALLBACK (only if photo fail / no uri)
-  setScanState("analyzing");
-
-  safeTimeout(() => {
-    setScanState("done");
-
-    safeTimeout(() => {
-      navigation?.navigate("Results", { mockScan: true });
-    }, 600);
-
-  }, 2000);
 };
+
+  // Gallery upload handler
+  const handleGallery = async () => {
+    if (scanState !== 'idle') {
+      console.log("❌ Already scanning. Current state:", scanState);
+      return;
+    }
+
+    console.log("📸 Opening gallery...");
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        aspect: [1, 1.38],
+        quality: 0.9,
+      });
+
+      console.log("📁 Gallery result:", result);
+
+      if (result.canceled) {
+        console.log("❌ User cancelled image selection");
+        return;
+      }
+
+      if (!result.assets || result.assets.length === 0) {
+        console.log("❌ No assets found in result");
+        return;
+      }
+
+      const imageUri = result.assets[0].uri;
+      console.log("✅ Selected image URI:", imageUri);
+      
+      setScanState("scanning");
+
+      try {
+        // API CALL with gallery image
+        const scanResult = await scanPrescription(imageUri, false);
+
+        console.log("🔥 GALLERY RESULT:", scanResult);
+
+        setScanState("done");
+
+        safeTimeout(() => {
+          navigation?.navigate("Results", {
+            data: scanResult,
+          });
+        }, 600);
+      } catch (apiError: any) {
+        console.log("❌ API ERROR:", apiError?.message || String(apiError));
+        setScanState("idle");
+        alert(`Upload failed: ${apiError?.message || 'Unknown error'}\n\nMake sure backend is running on http://localhost:8000`);
+      }
+    } catch (err) {
+      console.log("❌ GALLERY ERROR:", err);
+      setScanState("idle");
+      alert(`Gallery error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
 
   // Reset to idle (also used as cancel during scan)
   const handleReset = () => {
@@ -541,11 +590,16 @@ export default function ScanScreen({ navigation }: any) {
 
       {/* ── Bottom controls ── */}
       <View style={s.bottomBar}>
-        <TouchableOpacity style={s.sideBtn} activeOpacity={0.8}>
+        <TouchableOpacity 
+          style={[s.sideBtn, scanState !== 'idle' && { opacity: 0.5 }]} 
+          activeOpacity={0.8}
+          onPress={handleGallery}
+          disabled={scanState !== 'idle'}
+        >
           <View style={s.sideBtnInner}>
-            <IconGallery color="rgba(255,255,255,0.7)" size={21} />
+            <IconGallery color={scanState !== 'idle' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)'} size={21} />
           </View>
-          <Text style={s.sideBtnLabel}>Gallery</Text>
+          <Text style={[s.sideBtnLabel, scanState !== 'idle' && { opacity: 0.5 }]}>Gallery</Text>
         </TouchableOpacity>
 
         {/* Shutter button */}

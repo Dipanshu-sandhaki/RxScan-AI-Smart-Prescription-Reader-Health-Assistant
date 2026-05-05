@@ -1,37 +1,20 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, Animated, Dimensions,
+  TouchableOpacity, Animated, Dimensions, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Colors } from '../constants/colors';
+import { downloadPrescriptionPDF } from '../services/ocr.service';
 
 const { width } = Dimensions.get('window');
-
-const MOCK_MEDICINES = [
-  {
-    id: '1', num: '01', name: 'Amoxicillin', generic: 'Penicillin Antibiotic',
-    dosage: '500mg', frequency: '2× daily', duration: '7 days',
-    instructions: 'After meals', cost: 85, confidence: 96,
-    timing: ['morning', 'night'],
-  },
-  {
-    id: '2', num: '02', name: 'Paracetamol', generic: 'Analgesic / Antipyretic',
-    dosage: '650mg', frequency: '3× daily', duration: '5 days',
-    instructions: 'With water', cost: 42, confidence: 98,
-    timing: ['morning', 'afternoon', 'night'],
-  },
-  {
-    id: '3', num: '03', name: 'Vitamin D3', generic: 'Supplement · Cholecalciferol',
-    dosage: '1000 IU', frequency: 'Once daily', duration: '30 days',
-    instructions: 'Morning only', cost: 121, confidence: 91,
-    timing: ['morning'],
-  },
-];
 
 export default function ResultsScreen({ route, navigation }: any) {
   // ✅ NEW: real API data
   const data = route?.params?.data;
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const fadeAnim  = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -43,16 +26,112 @@ export default function ResultsScreen({ route, navigation }: any) {
     ]).start();
   }, []);
 
-  // ✅ FIX: use API data or fallback
-  const medicines = data?.medicines?.length
-    ? data.medicines
-    : MOCK_MEDICINES;
+  // Only show real OCR results
+  const medicines = data?.medicines || [];
+
+  if (!data?.medicines?.length) {
+    return (
+      <LinearGradient colors={['#071828', '#040E18']} style={styles.container}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <Text style={{ color: Colors.textSecondary, fontSize: 16, textAlign: 'center' }}>
+            No prescription detected.{'\n'}Please try scanning again.
+          </Text>
+          <TouchableOpacity onPress={() => navigation?.goBack()} style={{ marginTop: 20 }}>
+            <Text style={{ color: Colors.primary }}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </LinearGradient>
+    );
+  }
 
   // ✅ FIX: safe cost calculation
   const totalCost = medicines.reduce(
     (s: number, m: any) => s + (m.estimated_total_cost ?? m.cost ?? 0),
     0
   );
+
+  // ✅ PDF Download Handler - Platform Aware
+  const handleDownloadPDF = async () => {
+    try {
+      setIsDownloading(true);
+      console.log('📥 Starting PDF download on platform:', Platform.OS);
+      
+      // Request PDF from backend
+      const pdfArrayBuffer = await downloadPrescriptionPDF(data);
+      console.log('✅ PDF received from backend:', pdfArrayBuffer.byteLength, 'bytes');
+      
+      if (Platform.OS === 'web') {
+        // Web: Download using blob URL
+        console.log('🌐 Using web download method');
+        const blob = new Blob([pdfArrayBuffer], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `prescription_${new Date().toISOString().split('T')[0]}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        console.log('✅ PDF downloaded on web');
+      } else {
+        // Mobile: Use file system and sharing
+        console.log('📱 Using mobile file system method');
+        
+        // Create base64 string from ArrayBuffer
+        const bytes = new Uint8Array(pdfArrayBuffer);
+        const binaryString = String.fromCharCode.apply(null, Array.from(bytes) as any);
+        const base64String = btoa(binaryString);
+        
+        // Create filename with date
+        const fileName = `prescription_${new Date().toISOString().split('T')[0]}.pdf`;
+        const fileUri = FileSystem.documentDirectory + fileName;
+        
+        console.log('💾 Saving to:', fileUri);
+        await FileSystem.writeAsStringAsync(fileUri, base64String, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        
+        console.log('✅ PDF saved to file system');
+        
+        // Verify file exists
+        const fileInfo = await FileSystem.getInfoAsync(fileUri);
+        if (!fileInfo.exists) {
+          throw new Error('File was not saved properly');
+        }
+        
+        // Open share dialog
+        console.log('📤 Opening share dialog...');
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Share Prescription PDF',
+          UTI: 'com.adobe.pdf',
+        });
+        
+        console.log('✅ Share dialog completed');
+      }
+      
+      setIsDownloading(false);
+      Alert.alert(
+        '✅ Success',
+        Platform.OS === 'web'
+          ? 'Prescription PDF downloaded to your Downloads folder!'
+          : 'Prescription PDF ready to share!',
+        [{ text: 'OK', onPress: () => {} }]
+      );
+      
+    } catch (error) {
+      setIsDownloading(false);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('❌ PDF download error:', errorMsg);
+      console.error('Full error details:', error);
+      
+      Alert.alert(
+        '❌ Download Failed',
+        `Error: ${errorMsg}\n\nTroubleshooting:\n• Check backend is running\n• Try scanning again\n• Refresh the page`,
+        [{ text: 'Retry', onPress: handleDownloadPDF }, { text: 'Close', onPress: () => {} }]
+      );
+    }
+  };
 
   return (
     <LinearGradient colors={['#071828', '#040E18']} style={styles.container}>
@@ -116,6 +195,27 @@ export default function ResultsScreen({ route, navigation }: any) {
           {Math.round((data?.scan_confidence || 0) * 100)}%
         </Text>
       </Animated.View>
+
+      {/* ✅ PDF Download Button */}
+      <View style={styles.downloadBtnContainer}>
+        <TouchableOpacity
+          style={[styles.downloadBtn, isDownloading && { opacity: 0.6 }]}
+          onPress={handleDownloadPDF}
+          disabled={isDownloading}
+        >
+          {isDownloading ? (
+            <>
+              <ActivityIndicator color={Colors.textPrimary} size="small" />
+              <Text style={styles.downloadBtnText}>Generating PDF...</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.downloadBtnIcon}>📥</Text>
+              <Text style={styles.downloadBtnText}>Download as PDF</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
 
       {/* Medicine List */}
       <ScrollView
@@ -247,6 +347,29 @@ const styles = StyleSheet.create({
   },
   confFill: { height: 5 },
   confPct: { color: Colors.success },
+
+  downloadBtnContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
+  downloadBtn: {
+    flexDirection: 'row',
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  downloadBtnIcon: {
+    fontSize: 18,
+  },
+  downloadBtnText: {
+    color: Colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
 
   scroll: { flex: 1 },
   scrollContent: { padding: 20 },

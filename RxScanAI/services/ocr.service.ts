@@ -8,10 +8,11 @@ import axios, { AxiosError } from 'axios';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 // Change this to your backend URL:
-// Development:  http://localhost:8000  (iOS simulator)
+// Development:  http://127.0.0.1:8000  (Web/Localhost)
+//               http://localhost:8000  (iOS simulator)
 //               http://10.0.2.2:8000   (Android emulator)
 //               http://YOUR_IP:8000    (Real device on same WiFi)
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://10.47.238.159:8000';
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || (typeof window !== 'undefined' ? 'http://127.0.0.1:8000' : 'http://localhost:8000');
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -97,32 +98,56 @@ export async function scanPrescription(
   try {
     const formData = new FormData();
 
-    // React Native file upload format
+    // Determine filename and type
     const filename = imageUri.split('/').pop() || 'prescription.jpg';
     const fileType = filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
 
-    formData.append('file', {
-      uri: imageUri,
-      name: filename,
-      type: fileType,
-    } as any);
+    // Handle both React Native (URI object) and Web (Blob/File) formats
+    const isReactNative = typeof window === 'undefined' || (imageUri.startsWith('file://') && !imageUri.includes('blob'));
+
+    if (isReactNative) {
+      // React Native format: pass URI object directly
+      formData.append('file', {
+        uri: imageUri,
+        name: filename,
+        type: fileType,
+      } as any);
+    } else {
+      // Web format: fetch blob from URI and append
+      try {
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
+        formData.append('file', blob, filename);
+      } catch (fetchErr) {
+        console.error('❌ Fetch blob error:', fetchErr);
+        // Fallback: try direct URI
+        formData.append('file', {
+          uri: imageUri,
+          name: filename,
+          type: fileType,
+        } as any);
+      }
+    }
 
     formData.append('is_handwritten', String(isHandwritten));
 
+    console.log('📤 Uploading to backend:', API_BASE);
+    
     const response = await api.post<ScanResult>('/api/scan', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
-        'Accept': 'application/json',
       },
     });
 
+    console.log('✅ Upload successful');
     return response.data;
 
   } catch (error) {
     const axiosError = error as AxiosError<{ detail: string }>;
 
     if (axiosError.response) {
-      const detail = axiosError.response.data?.detail || 'Scan failed';
+      const detail = axiosError.response.data?.detail || JSON.stringify(axiosError.response.data) || 'Scan failed';
+      console.error('❌ Backend error (status', axiosError.response.status + '):', detail);
       throw new Error(detail);
     } else if (axiosError.code === 'ECONNABORTED') {
       throw new Error('Scan timed out. The image may be too complex. Try again.');
@@ -132,6 +157,7 @@ export async function scanPrescription(
         `Expected: ${API_BASE}`
       );
     }
+    console.error('❌ Unexpected error:', error);
     throw error;
   }
 }
@@ -169,6 +195,55 @@ export async function checkBackendHealth(): Promise<{
       modelsLoaded: false,
       message: '❌ Backend offline. Start uvicorn.',
     };
+  }
+}
+
+/**
+ * Download prescription as PDF
+ * @param prescriptionData - Prescription data from OCR scan
+ * @returns ArrayBuffer containing PDF data
+ */
+export async function downloadPrescriptionPDF(prescriptionData: any): Promise<ArrayBuffer> {
+  try {
+    console.log('📄 Requesting PDF from backend...');
+    console.log('Request payload:', {
+      medicines: prescriptionData.medicines?.length || 0,
+      doctor_info: prescriptionData.doctor_info ? 'present' : 'null',
+      scan_confidence: prescriptionData.scan_confidence,
+    });
+
+    const response = await api.post('/api/pdf/download', {
+      medicines: prescriptionData.medicines || [],
+      doctor_info: prescriptionData.doctor_info || null,
+      scan_confidence: prescriptionData.scan_confidence || 0,
+      processing_time_seconds: prescriptionData.processing_time_seconds || 0,
+    }, {
+      responseType: 'arraybuffer',
+      timeout: 30000, // 30s timeout for PDF generation
+    });
+
+    console.log('✅ PDF response received:', response.data.byteLength, 'bytes');
+    console.log('Response headers:', response.headers);
+    return response.data;
+  } catch (error) {
+    const axiosError = error as AxiosError;
+    console.error('❌ PDF download error details:', {
+      status: axiosError.response?.status,
+      statusText: axiosError.response?.statusText,
+      data: axiosError.response?.data,
+      message: axiosError.message,
+      code: axiosError.code,
+    });
+    
+    if (axiosError.response) {
+      const detail = axiosError.response.data ? JSON.stringify(axiosError.response.data) : axiosError.message;
+      throw new Error(`Backend error: ${detail}`);
+    } else if (axiosError.code === 'ECONNREFUSED') {
+      throw new Error('Cannot connect to backend. Make sure the server is running.');
+    } else if (axiosError.code === 'ECONNABORTED') {
+      throw new Error('PDF generation timed out. Please try again.');
+    }
+    throw new Error(axiosError.message || 'Failed to generate PDF');
   }
 }
 

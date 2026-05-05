@@ -9,8 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-from routers import ocr, translate, pharmacy
+from routers import ocr, translate, pharmacy, auth
 from models.ocr_model import load_models
+from db.auth_db import init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Load models on startup"""
     logger.info("🚀 RxScan AI Backend starting...")
+    
+    # Initialize database
+    init_db()
+    logger.info("✅ Database initialized.")
+    
+    # Load OCR models
     load_models()  # Pre-load TrOCR models into memory
     logger.info("✅ All models loaded. Ready!")
     yield
@@ -46,6 +53,7 @@ app.add_middleware(
 app.include_router(ocr.router,      prefix="/api", tags=["OCR"])
 app.include_router(translate.router, prefix="/api", tags=["Translation"])
 app.include_router(pharmacy.router,  prefix="/api", tags=["Pharmacy"])
+app.include_router(auth.router,     prefix="/api", tags=["Authentication"])
 
 
 @app.get("/")
@@ -55,11 +63,14 @@ def root():
         "status": "running",
         "version": "1.0.0",
         "endpoints": {
-            "scan":      "POST /api/scan",
-            "translate": "POST /api/translate",
-            "pharmacy":  "GET  /api/pharmacies/nearby",
-            "drug_info": "GET  /api/drug/{name}",
-            "docs":      "GET  /docs",
+            "scan":       "POST /api/scan",
+            "translate":  "POST /api/translate",
+            "pharmacy":   "GET  /api/pharmacies/nearby",
+            "drug_info":  "GET  /api/drug/{name}",
+            "register":   "POST /api/auth/register",
+            "login":      "POST /api/auth/login",
+            "me":         "GET  /api/auth/me",
+            "docs":       "GET  /docs",
         }
     }
 
