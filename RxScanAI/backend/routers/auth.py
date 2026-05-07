@@ -3,6 +3,7 @@ RxScan AI — Auth Router
 JWT-based authentication with SQLite database
 POST /api/auth/register  → Create new account
 POST /api/auth/login     → Login and get token
+POST /api/auth/reset-password → Update password directly
 GET  /api/auth/me        → Get current user info
 """
 
@@ -12,11 +13,14 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Header
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from jose import jwt, JWTError
 
-from db.auth_db import create_user, get_user_by_email, get_user_by_id, verify_password, update_last_login, delete_user
+# ─── UPDATED: Added update_user_password to imports ───
+from db.auth_db import (
+    create_user, get_user_by_email, get_user_by_id, 
+    verify_password, update_last_login, delete_user, update_user_password
+)
 
 router = APIRouter()
 
@@ -35,6 +39,11 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: str
     password: str
+
+# ─── NEW: Model for resetting password
+class PasswordReset(BaseModel):
+    email: str
+    password: str  # We receive the new password under this key
 
 class UserResponse(BaseModel):
     id: str
@@ -78,15 +87,12 @@ def _verify_token(token: str) -> Optional[str]:
 async def register(user_data: UserRegister):
     """Register a new user"""
     try:
-        # Validate email
         if not _is_valid_email(user_data.email):
             raise ValueError("Invalid email format")
         
-        # Validate password
         if len(user_data.password) < 6:
             raise ValueError("Password must be at least 6 characters")
         
-        # Create new user in database
         user_id = str(uuid.uuid4())
         new_user = create_user(
             user_id=user_id,
@@ -95,7 +101,6 @@ async def register(user_data: UserRegister):
             password=user_data.password
         )
         
-        # Create token
         token = _create_token(user_id)
         
         return {
@@ -113,28 +118,23 @@ async def register(user_data: UserRegister):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
+
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
     """Login existing user"""
     try:
-        # Validate email
         if not _is_valid_email(credentials.email):
             raise ValueError("Invalid email format")
         
-        # Find user by email
         user = get_user_by_email(credentials.email.lower().strip())
         
         if not user:
-            raise HTTPException(status_code=404, detail="please be sign up first")
+            raise HTTPException(status_code=404, detail="No account found with this email. Please sign up.")
         
-        # Verify password
         if not verify_password(credentials.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
-        # Update last login
         update_last_login(user["id"])
-        
-        # Create token
         token = _create_token(user["id"])
         
         return {
@@ -154,21 +154,48 @@ async def login(credentials: UserLogin):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
+
+# ─── NEW: Password Reset/Update Endpoint ──────────────────────────────────────
+@router.post("/auth/reset-password")
+async def reset_password(data: PasswordReset):
+    """Update user password directly (MVP approach without emails)"""
+    try:
+        if not _is_valid_email(data.email):
+            raise ValueError("Invalid email format")
+            
+        if len(data.password) < 6:
+            raise ValueError("New password must be at least 6 characters")
+            
+        # Call the new database function
+        success = update_user_password(data.email, data.password)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="No account found with this email address.")
+            
+        return {"success": True, "message": "Password updated successfully"}
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reset password: {str(e)}")
+# ──────────────────────────────────────────────────────────────────────────────
+
+
 @router.get("/auth/me", response_model=UserResponse)
 async def get_current_user(authorization: Optional[str] = Header(None)):
     """Get current logged-in user info"""
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
     
-    # Extract token from "Bearer <token>"
     token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
-    
     user_id = _verify_token(token)
+    
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
     user = get_user_by_id(user_id)
-    
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -179,26 +206,21 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
         "created_at": user["created_at"],
     }
 
+
 @router.post("/auth/logout")
 async def logout(authorization: Optional[str] = Header(None)):
-    """Logout and delete user from database"""
+    """Logout endpoint"""
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
     
-    # Extract token from "Bearer <token>"
     token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
-    
     user_id = _verify_token(token)
+    
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
-    # Delete user from database
-    success = delete_user(user_id)
-    
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    return {"success": True, "message": "Logged out and account deleted successfully"}
+    return {"success": True, "message": "Logged out successfully"}
+
 
 @router.delete("/auth/delete-account")
 async def delete_account(authorization: Optional[str] = Header(None)):
@@ -206,20 +228,18 @@ async def delete_account(authorization: Optional[str] = Header(None)):
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
     
-    # Extract token from "Bearer <token>"
     token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
-    
     user_id = _verify_token(token)
+    
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
-    # Delete user from database
     success = delete_user(user_id)
-    
     if not success:
         raise HTTPException(status_code=404, detail="User not found")
     
     return {"success": True, "message": "Account deleted permanently"}
+
 
 class DeleteAccountRequest(BaseModel):
     email: str
@@ -228,19 +248,15 @@ class DeleteAccountRequest(BaseModel):
 @router.post("/auth/delete-account-by-email")
 async def delete_account_by_email(request: DeleteAccountRequest):
     """Delete account using email and password (for logged out users)"""
-    # Find user by email
     user = get_user_by_email(request.email.lower().strip())
     
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Verify password
     if not verify_password(request.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    # Delete user from database
     success = delete_user(user["id"])
-    
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete account")
     

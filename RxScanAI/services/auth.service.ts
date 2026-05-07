@@ -1,48 +1,102 @@
 /**
  * RxScan AI — Auth Service
  * Handles user authentication with backend API
+ *
+ * FIXES APPLIED:
+ * 1. API URL now uses your PC's actual IP (works on Expo Go + Web)
+ * 2. localStorage usage removed (crashes on native)
+ * 3. logout() no longer deletes the user from DB (was a major bug)
+ * 4. isLoggedIn() simplified and fixed
+ * 5. Platform-aware API URL selection
+ * 6. ADDED updatePassword() for MVP password resets
  */
 
-import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from "axios";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || (typeof window !== 'undefined' ? 'http://127.0.0.1:8000' : 'http://localhost:8000');
+// ─── API URL Config ────────────────────────────────────────────────────────────
+//
+//  🔴 IMPORTANT: Replace the IP below with YOUR PC's IP address.
+//
+const PC_IP = "192.168.8.104"; // ← APNA IP YAHAN DAALO
+
+const API_BASE = (() => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL; // .env file se override kar sakte ho
+  }
+  if (Platform.OS === "web") {
+    return "http://127.0.0.1:8000"; // Web browser
+  }
+  if (Platform.OS === "android") {
+    // Emulator pe hai? → 10.0.2.2
+    // Real phone pe hai (Expo Go)? → PC ka IP
+    return `http://${PC_IP}:8000`;
+  }
+  return `http://${PC_IP}:8000`; // iOS
+})();
+
+console.log("🔌 API Base URL:", API_BASE);
+
+// ─── Axios Instance ────────────────────────────────────────────────────────────
 
 const api = axios.create({
   baseURL: API_BASE,
   timeout: 30000,
+  headers: {
+    "Content-Type": "application/json",
+  },
 });
 
-// Add logging to all requests
-api.interceptors.request.use(request => {
-  console.log('API Request:', request.method?.toUpperCase(), request.url, request.baseURL);
+// Request logger
+api.interceptors.request.use((request) => {
+  console.log(
+    "➡️  API Request:",
+    request.method?.toUpperCase(),
+    request.baseURL + request.url,
+  );
   return request;
 });
 
+// Response logger + error handler
 api.interceptors.response.use(
-  response => {
-    console.log('API Response:', response.status, response.config.url);
+  (response) => {
+    console.log("✅ API Response:", response.status, response.config.url);
     return response;
   },
-  error => {
-    console.log('API Error:', error.response?.status, error.config?.url, error.message);
-    if (error.code === 'ECONNREFUSED') {
-      console.log('Backend not running on:', API_BASE);
+  (error) => {
+    const status = error.response?.status;
+    const url = error.config?.url;
+    const message = error.response?.data?.detail || error.message;
+    console.log(`❌ API Error [${status}] ${url}: ${message}`);
+
+    if (error.code === "ECONNREFUSED" || error.code === "ERR_NETWORK") {
+      console.log(
+        "🔴 Backend is not running or IP is wrong. API_BASE =",
+        API_BASE,
+      );
+      console.log(
+        "   → Start backend: uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+      );
     }
     return Promise.reject(error);
-  }
+  },
 );
 
-// Add auth token to requests
+// Attach auth token to every request automatically
 api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  try {
+    const token = await AsyncStorage.getItem("auth_token");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  } catch (e) {
+    // AsyncStorage fail hone pe silently ignore karo
   }
   return config;
 });
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface User {
   id: string;
@@ -57,90 +111,103 @@ export interface AuthResponse {
   user: User;
 }
 
-// ─── API Functions ────────────────────────────────────────────────────────────
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+async function _storeAuthData(
+  data: AuthResponse,
+  email: string,
+): Promise<void> {
+  await AsyncStorage.multiSet([
+    ["auth_token", data.access_token],
+    ["user", JSON.stringify(data.user)],
+    ["saved_email", email],
+  ]);
+}
+
+// ─── Auth Functions ───────────────────────────────────────────────────────────
 
 /**
- * Test backend connection
+ * Backend se connection test karo
  */
 export async function testBackendConnection(): Promise<boolean> {
   try {
-    const response = await api.get('/health');
-    console.log('Backend connection test:', response.data);
+    const response = await api.get("/health");
+    console.log("🟢 Backend connected:", response.data);
     return true;
-  } catch (error) {
-    console.log('Backend connection failed:', error);
+  } catch {
+    console.log("🔴 Backend connection failed. URL:", API_BASE);
     return false;
   }
 }
 
 /**
- * Register a new user
+ * Naya user register karo
  */
-export async function register(name: string, email: string, password: string): Promise<AuthResponse> {
-  console.log('auth.service - Register called with:', { name, email });
-  
-  try {
-    const response = await api.post<AuthResponse>('/api/auth/register', {
-      name,
-      email,
-      password,
-    });
-    
-    console.log('auth.service - Register response:', response.data);
-    
-    // Store token
-    await AsyncStorage.setItem('auth_token', response.data.access_token);
-    await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
-    
-    // Save email for pre-fill on next login
-    await AsyncStorage.setItem('saved_email', email);
-    
-    console.log('auth.service - Token and user stored');
-    return response.data;
-  } catch (error) {
-    console.log('auth.service - Register error:', error);
-    throw error;
-  }
+export async function register(
+  name: string,
+  email: string,
+  password: string,
+): Promise<AuthResponse> {
+  console.log("📝 Register:", { name, email });
+
+  const response = await api.post<AuthResponse>("/api/auth/register", {
+    name,
+    email,
+    password,
+  });
+
+  await _storeAuthData(response.data, email);
+  console.log("✅ Registered and token stored");
+  return response.data;
+}
+
+// Alias — AuthScreen mein signup naam se import ho raha tha
+export { register as signup };
+
+/**
+ * Existing user login karo
+ */
+export async function login(
+  email: string,
+  password: string,
+): Promise<AuthResponse> {
+  console.log("🔐 Login:", { email });
+
+  const response = await api.post<AuthResponse>("/api/auth/login", {
+    email,
+    password,
+  });
+
+  await _storeAuthData(response.data, email);
+  console.log("✅ Logged in and token stored");
+  return response.data;
 }
 
 /**
- * Login existing user
+ * NEW: Update / Reset Password 
+ * Sends new password to backend to update the database
  */
-export async function login(email: string, password: string): Promise<AuthResponse> {
-  console.log('auth.service - Login called with:', { email, password: '***' });
-  
-  try {
-    const response = await api.post<AuthResponse>('/api/auth/login', {
-      email,
-      password,
-    });
-    
-    console.log('auth.service - Login response:', response.data);
-    
-    // Store token
-    await AsyncStorage.setItem('auth_token', response.data.access_token);
-    await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
-    
-    // Save email for pre-fill on next login
-    await AsyncStorage.setItem('saved_email', email);
-    
-    return response.data;
-  } catch (error: any) {
-    console.log('auth.service - Login error:', error);
-    console.log('auth.service - Login error response:', error.response);
-    console.log('auth.service - Login error data:', error.response?.data);
-    // Re-throw the error so the frontend can handle it
-    throw error;
-  }
+export async function updatePassword(
+  email: string,
+  newPassword: string,
+): Promise<void> {
+  console.log("🔑 Resetting password for:", { email });
+
+  await api.post("/api/auth/reset-password", {
+    email,
+    password: newPassword, 
+  });
+
+  console.log("✅ Password updated successfully in database");
 }
 
 /**
- * Get current user info
+ * Current logged-in user info backend se fetch karo
  */
 export async function getCurrentUser(): Promise<User | null> {
   try {
-    const response = await api.get<User>('/api/auth/me');
-    await AsyncStorage.setItem('user', JSON.stringify(response.data));
+    const response = await api.get<User>("/api/auth/me");
+    await AsyncStorage.setItem("user", JSON.stringify(response.data));
     return response.data;
   } catch {
     return null;
@@ -148,39 +215,32 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 /**
- * Check if user is logged in
+ * Check karo user logged in hai ya nahi
+ * Token exist karta hai aur valid hai?
  */
 export async function isLoggedIn(): Promise<boolean> {
   try {
-    // For web, also check localStorage directly
-    const token = await AsyncStorage.getItem('auth_token');
-    const webToken = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
-    
-    console.log('isLoggedIn check - AsyncStorage token:', token);
-    console.log('isLoggedIn check - localStorage token:', webToken);
-    
-    if (!token && !webToken) return false;
-    
-    // Use web token if AsyncStorage is empty
-    const activeToken = token || webToken;
-    
-    // Verify token is still valid
+    const token = await AsyncStorage.getItem("auth_token");
+    if (!token) {
+      console.log("isLoggedIn: No token found");
+      return false;
+    }
+    // Token ke saath backend se verify karo
     const user = await getCurrentUser();
-    console.log('isLoggedIn check - user:', user);
+    console.log("isLoggedIn:", !!user, user?.email);
     return !!user;
-  } catch (error) {
-    console.log('isLoggedIn check failed:', error);
+  } catch {
     return false;
   }
 }
 
 /**
- * Get stored user
+ * Locally stored user object return karo (offline use ke liye)
  */
 export async function getStoredUser(): Promise<User | null> {
-  const userJson = await AsyncStorage.getItem('user');
-  if (!userJson) return null;
   try {
+    const userJson = await AsyncStorage.getItem("user");
+    if (!userJson) return null;
     return JSON.parse(userJson) as User;
   } catch {
     return null;
@@ -188,71 +248,65 @@ export async function getStoredUser(): Promise<User | null> {
 }
 
 /**
- * Logout user
+ * Logout — sirf local token/data clear karo
  */
 export async function logout(): Promise<void> {
-  await api.post('/api/auth/logout');
-  await AsyncStorage.removeItem('auth_token');
-  await AsyncStorage.removeItem('user');
-}
-
-export async function deleteAccount(): Promise<void> {
-  await api.delete('/api/auth/delete-account');
-  // Clear all local data after successful deletion
-  await forceClearAuth();
-}
-
-export async function deleteAccountByEmail(email: string, password: string): Promise<void> {
-  await api.post('/api/auth/delete-account-by-email', {
-    email,
-    password
-  });
-  // Clear all local data after successful deletion
-  await forceClearAuth();
+  await AsyncStorage.multiRemove(["auth_token", "user"]);
+  console.log("✅ Logged out — local data cleared");
 }
 
 /**
- * Force clear auth data (for testing/debug)
+ * Account permanently delete karo (authenticated)
+ */
+export async function deleteAccount(): Promise<void> {
+  await api.delete("/api/auth/delete-account");
+  await forceClearAuth();
+  console.log("✅ Account deleted");
+}
+
+/**
+ * Account delete karo email + password se (token nahi hai toh)
+ */
+export async function deleteAccountByEmail(
+  email: string,
+  password: string,
+): Promise<void> {
+  await api.post("/api/auth/delete-account-by-email", { email, password });
+  await forceClearAuth();
+  console.log("✅ Account deleted by email");
+}
+
+/**
+ * Sabka data clear karo — debug/test ke liye
  */
 export async function forceClearAuth(): Promise<void> {
-  // Clear AsyncStorage
-  await AsyncStorage.removeItem('auth_token');
-  await AsyncStorage.removeItem('user');
-  
-  // Also clear localStorage for web
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
-  }
-  
-  console.log('✅ Auth data force cleared from AsyncStorage and localStorage');
+  await AsyncStorage.multiRemove(["auth_token", "user", "saved_email"]);
+  console.log("🧹 Auth data force cleared");
 }
 
 /**
- * Clear auth data (for errors)
+ * Sirf auth token aur user clear karo (error handling ke liye)
  */
 export async function clearAuth(): Promise<void> {
-  await AsyncStorage.removeItem('auth_token');
-  await AsyncStorage.removeItem('user');
+  await AsyncStorage.multiRemove(["auth_token", "user"]);
 }
 
 /**
- * Save email for pre-filling login form after logout
+ * Email save karo — login form pre-fill ke liye
  */
 export async function saveEmail(email: string): Promise<void> {
-  await AsyncStorage.setItem('saved_email', email);
+  await AsyncStorage.setItem("saved_email", email);
 }
 
 /**
- * Get saved email for pre-filling login form
+ * Saved email wapas lao
  */
 export async function getSavedEmail(): Promise<string | null> {
   try {
-    return await AsyncStorage.getItem('saved_email');
+    return await AsyncStorage.getItem("saved_email");
   } catch {
     return null;
   }
 }
 
-// Alias for register to match AuthScreen import
-export { register as signup };
+export { API_BASE };

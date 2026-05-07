@@ -9,9 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-from routers import ocr, translate, pharmacy, auth
+# ✅ Imported the new history router
+from routers import ocr, translate, pharmacy, auth, history
 from models.ocr_model import load_models
 from db.auth_db import init_db
+# ✅ Imported the history table initialization function
+from db.history_db import init_history_table
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,6 +27,8 @@ async def lifespan(app: FastAPI):
     
     # Initialize database
     init_db()
+    # ✅ Initialize history table
+    init_history_table()
     logger.info("✅ Database initialized.")
     
     # Load OCR models
@@ -54,6 +59,8 @@ app.include_router(ocr.router,      prefix="/api", tags=["OCR"])
 app.include_router(translate.router, prefix="/api", tags=["Translation"])
 app.include_router(pharmacy.router,  prefix="/api", tags=["Pharmacy"])
 app.include_router(auth.router,     prefix="/api", tags=["Authentication"])
+# ✅ Mounted the new history router
+app.include_router(history.router,  prefix="/api", tags=["History"])
 
 
 @app.get("/")
@@ -69,7 +76,9 @@ def root():
             "drug_info":  "GET  /api/drug/{name}",
             "register":   "POST /api/auth/register",
             "login":      "POST /api/auth/login",
+            "reset":      "POST /api/auth/reset-password",
             "me":         "GET  /api/auth/me",
+            "history":    "GET, POST, DELETE /api/history", # ✅ Added history to docs
             "docs":       "GET  /docs",
         }
     }

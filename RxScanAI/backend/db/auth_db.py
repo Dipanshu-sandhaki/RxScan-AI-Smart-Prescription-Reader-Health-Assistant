@@ -125,6 +125,22 @@ def update_last_login(user_id: str):
     finally:
         conn.close()
 
+# ─── NEW: Update Password Function ──────────────────────────────────────────
+def update_user_password(email: str, new_password: str) -> bool:
+    """Update user password directly in the database"""
+    conn = get_db_connection()
+    try:
+        password_hash = hash_password(new_password)
+        cursor = conn.execute(
+            "UPDATE users SET password_hash = ? WHERE email = ?",
+            (password_hash, email.lower().strip())
+        )
+        conn.commit()
+        # Returns True if a row was actually updated (meaning email existed)
+        return cursor.rowcount > 0 
+    finally:
+        conn.close()
+# ────────────────────────────────────────────────────────────────────────────
 
 def delete_user(user_id: str) -> bool:
     """Delete user from database permanently"""

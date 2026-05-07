@@ -1,145 +1,71 @@
-"""
-RxScan AI — Build Local Drug Database
-Downloads WHO INN drug list + sample NPPA prices and saves as local JSON.
-
-Run this ONCE before starting the backend:
-    python data/build_drug_db.py
-
-The generated medicines_db.json is bundled with the backend for offline use.
-"""
-
+import pandas as pd
 import json
+import re
 import os
-import httpx
 
-OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+# ─── ROBUST FILE PATHS ───
+# Get the exact folder where this script is located (backend/data)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Curated list of 200 most common drugs prescribed in India
-# Source: WHO INN list + India Essential Medicines List 2022
-COMMON_INDIAN_DRUGS = [
-    # Antibiotics
-    "Amoxicillin", "Azithromycin", "Ciprofloxacin", "Doxycycline",
-    "Metronidazole", "Clarithromycin", "Cefixime", "Ampicillin",
-    "Cloxacillin", "Erythromycin", "Levofloxacin", "Norfloxacin",
-    "Ofloxacin", "Cephalexin", "Cotrimoxazole", "Nitrofurantoin",
+CSV_FILE_PATH = os.path.join(SCRIPT_DIR, "nppaipdms.csv")
+OUTPUT_JSON_PATH = os.path.join(SCRIPT_DIR, "medicines_db.json")
 
-    # Pain / Fever
-    "Paracetamol", "Ibuprofen", "Diclofenac", "Aspirin", "Naproxen",
-    "Ketorolac", "Aceclofenac", "Nimesulide", "Tramadol", "Codeine",
+def clean_medicine_name(name):
+    """Cleans the medicine name for better OCR matching"""
+    name = str(name).lower()
+    # Removes anything inside brackets if present (e.g., dosage info)
+    name = re.sub(r'\(.*?\)', '', name) 
+    return name.strip()
 
-    # Vitamins / Minerals
-    "Vitamin D3", "Vitamin B12", "Vitamin C", "Folic Acid", "Iron",
-    "Calcium Carbonate", "Zinc", "Vitamin E", "Vitamin B Complex",
-    "Magnesium", "Potassium Chloride",
-
-    # Gastrointestinal
-    "Omeprazole", "Pantoprazole", "Ranitidine", "Domperidone",
-    "Metoclopramide", "Ondansetron", "Loperamide", "Lactulose",
-    "Bisacodyl", "Rabeprazole", "Esomeprazole", "Famotidine",
-
-    # Antidiabetic
-    "Metformin", "Glibenclamide", "Glipizide", "Insulin",
-    "Sitagliptin", "Vildagliptin", "Pioglitazone", "Gliclazide",
-    "Dapagliflozin", "Empagliflozin",
-
-    # Antihypertensive
-    "Amlodipine", "Enalapril", "Losartan", "Atenolol", "Metoprolol",
-    "Telmisartan", "Ramipril", "Lisinopril", "Valsartan", "Nifedipine",
-    "Hydrochlorothiazide", "Furosemide", "Spironolactone",
-
-    # Respiratory
-    "Salbutamol", "Prednisolone", "Montelukast", "Cetirizine",
-    "Loratadine", "Fexofenadine", "Chlorpheniramine", "Budesonide",
-    "Formoterol", "Ipratropium", "Ambroxol", "Bromhexine",
-
-    # Cardiovascular
-    "Atorvastatin", "Rosuvastatin", "Clopidogrel", "Warfarin",
-    "Digoxin", "Diltiazem", "Isosorbide", "Nitroglycerin",
-
-    # Mental Health / Neuro
-    "Alprazolam", "Diazepam", "Clonazepam", "Escitalopram",
-    "Sertraline", "Fluoxetine", "Amitriptyline", "Gabapentin",
-    "Pregabalin", "Levodopa", "Phenytoin", "Carbamazepine",
-    "Valproic Acid", "Lamotrigine",
-
-    # Thyroid
-    "Levothyroxine", "Carbimazole", "Propylthiouracil",
-
-    # Topical / Dermatology
-    "Betamethasone", "Clotrimazole", "Mupirocin", "Permethrin",
-    "Calamine", "Hydrocortisone",
-
-    # Eye / ENT
-    "Ciprofloxacin Eye Drops", "Prednisolone Eye Drops",
-    "Timolol", "Latanoprost", "Oxymetazoline",
-
-    # Antifungal
-    "Fluconazole", "Itraconazole", "Ketoconazole", "Terbinafine",
-
-    # Antiparasitic
-    "Albendazole", "Mebendazole", "Ivermectin", "Chloroquine",
-
-    # Hormones
-    "Progesterone", "Estradiol", "Testosterone", "Dexamethasone",
-    "Methylprednisolone", "Hydrocortisone",
-]
-
-# Sample NPPA price ceilings (INR) — partial list for common drugs
-# Full data: https://www.nhm.gov.in/nlem.html
-SAMPLE_NPPA_PRICES = {
-    "amoxicillin": 2.50,
-    "azithromycin": 8.30,
-    "ciprofloxacin": 3.10,
-    "paracetamol": 0.75,
-    "ibuprofen": 2.20,
-    "metformin": 1.80,
-    "atorvastatin": 4.50,
-    "amlodipine": 2.10,
-    "omeprazole": 3.60,
-    "pantoprazole": 4.20,
-    "vitamin d3": 2.80,
-    "vitamin b12": 3.90,
-    "folic acid": 0.50,
-    "iron": 1.20,
-    "calcium carbonate": 1.50,
-    "domperidone": 3.40,
-    "ondansetron": 5.50,
-    "salbutamol": 2.90,
-    "montelukast": 6.80,
-    "cetirizine": 1.60,
-    "losartan": 4.30,
-    "atenolol": 1.90,
-    "prednisolone": 2.70,
-    "diclofenac": 2.40,
-    "ranitidine": 2.10,
-}
-
+def extract_price(price_str):
+    """Extracts only the float price from strings like '₹ 0.28(1 Tablet)'"""
+    match = re.search(r'\d+\.\d+|\d+', str(price_str))
+    if match:
+        return float(match.group())
+    return None
 
 def build_database():
-    print("Building RxScan AI drug database...")
+    print(f"Reading CSV File from: {CSV_FILE_PATH}...")
+    
+    if not os.path.exists(CSV_FILE_PATH):
+        print("❌ Error: CSV file not found! Make sure 'nppaipdms.csv' is inside the 'backend/data' folder.")
+        return
+        
+    try:
+        # skiprows=1 handles the weird scraper headers in this specific Kaggle dataset
+        df = pd.read_csv(CSV_FILE_PATH, skiprows=1)
+    except Exception as e:
+        print(f"❌ Failed to read CSV: {e}")
+        return
+        
+    med_db = {}
+    
+    # Iterate through rows and extract data
+    for index, row in df.iterrows():
+        try:
+            # Index 2 is Medicine Name, Index 5 is Price based on your CSV format
+            raw_name = row.iloc[2]
+            raw_price = row.iloc[5]
+            
+            if pd.isna(raw_name) or pd.isna(raw_price):
+                continue
+                
+            clean_name = clean_medicine_name(raw_name)
+            price = extract_price(raw_price)
+            
+            if clean_name and price is not None:
+                # Overwrites if duplicate exists, keeping the latest price
+                med_db[clean_name] = price
+                
+        except Exception:
+            continue
 
-    # Build medicines DB
-    medicines_db = {
-        "version": "1.0.0",
-        "source": "WHO INN List + India Essential Medicines List 2022",
-        "total": len(COMMON_INDIAN_DRUGS),
-        "drugs": COMMON_INDIAN_DRUGS,
-    }
-
-    medicines_path = os.path.join(OUTPUT_DIR, "medicines_db.json")
-    with open(medicines_path, "w", encoding="utf-8") as f:
-        json.dump(medicines_db, f, indent=2, ensure_ascii=False)
-    print(f"  medicines_db.json: {len(COMMON_INDIAN_DRUGS)} drugs")
-
-    # Build NPPA prices DB
-    nppa_path = os.path.join(OUTPUT_DIR, "nppa_prices.json")
-    with open(nppa_path, "w", encoding="utf-8") as f:
-        json.dump(SAMPLE_NPPA_PRICES, f, indent=2, ensure_ascii=False)
-    print(f"  nppa_prices.json: {len(SAMPLE_NPPA_PRICES)} price entries")
-
-    print("\nDatabase build complete!")
-    print(f"Files saved to: {OUTPUT_DIR}")
-
+    # ─── OVERWRITE THE OLD JSON ───
+    with open(OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+        json.dump(med_db, f, indent=4)
+        
+    print(f"✅ Success! Replaced old DB. Total {len(med_db)} medicines saved to {OUTPUT_JSON_PATH}")
+    print("Restart your FastAPI backend to load the new prices!")
 
 if __name__ == "__main__":
     build_database()
